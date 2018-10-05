@@ -36,7 +36,7 @@ gdb_read_uleb128_to_uint64 (const unsigned char *buf,
 // Has same API as the above.
 size_t
 read_uleb128 (const unsigned char *bytes, const unsigned char *buf_end,
-	      int64_t *result)
+	      uint64_t *result)
 {
   // FIXME if there are < 16 bytes in the buffer, call
   // gdb_read_uleb128_to_uint64.
@@ -45,14 +45,16 @@ read_uleb128 (const unsigned char *bytes, const unsigned char *buf_end,
   __m128i raw = _mm_loadu_si128 ((__m128i *) bytes);
 
   // First invert the continuation bits.  Now a zero means "keep the
-  // next byte".  This also makes the values more usable.
+  // next byte".  This also makes the values more usable -- but note
+  // that the high bit of the high byte will remain set.  We remove it
+  // at the end.
   __m128i k = _mm_set1_epi8 (0x80);
   raw = _mm_xor_si128 (raw, k);
 
-  // The continuation bit affects the following byte, so shift right
-  // by one.  This shifts in a zero, which means "keep" because we
+  // The continuation bit affects the following byte, so shift left by
+  // one.  This shifts in a zero, which means "keep" because we
   // inverted.
-  __m128i mask = _mm_bsrli_si128 (raw, 1);
+  __m128i mask = _mm_bslli_si128 (raw, 1);
 
   // The continuation bit affects the following byte.  Since we
   // inverted the continuation bits, we want to find the first byte
@@ -71,8 +73,8 @@ read_uleb128 (const unsigned char *bytes, const unsigned char *buf_end,
 
   // Drop the rightmost bytes by updating the mask.
   // FIXME this can't be good.
-  __m128i indices = _mm_set_epi8 (1, 2, 3, 4, 5, 6, 7, 8, 9,
-				  10, 11, 12, 13, 14, 15, 16);
+  __m128i indices = _mm_setr_epi8 (0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+				   10, 11, 12, 13, 14, 15);
   __m128i compare = _mm_set1_epi8 (nbytes);
 
   // After this, each byte in MASK is either 0xff, to keep the value,
@@ -81,6 +83,10 @@ read_uleb128 (const unsigned char *bytes, const unsigned char *buf_end,
 
   // Clear the bytes we don't need.
   __m128i value = _mm_and_si128 (mask, raw);
+
+  // Now mask off the one lingering high bit.
+  mask  = _mm_set1_epi8 (0x7f);
+  value = _mm_and_si128 (mask, value);
 
   // Now we have a byte vector like:
   //   0123456789
@@ -121,9 +127,19 @@ read_uleb128 (const unsigned char *bytes, const unsigned char *buf_end,
   // additional 8 bits of payload in another 64 bit slot, like:
   //    000000001
   int64_t v1 = _mm_extract_epi64 (value, 0);
-  int64_t v2 = _mm_extract_epi64 (value, 0);
+  int64_t v2 = _mm_extract_epi64 (value, 1);
 
+#if 0
+  uint64_t r = v1 | (v2 << 56);
+
+  // Finally we have to strip off the high bit, which was left over
+  // from the inversion stage, above.
+  int highzeros = __builtin_clzll (r);
+  *result = r & ~(1ull << (63 - highzeros));
+#else
   *result = v1 | (v2 << 56);
+#endif
+
   return nbytes;
 }
 

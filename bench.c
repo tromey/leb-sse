@@ -1,7 +1,16 @@
 #include <stdlib.h>
 #include <inttypes.h>
+#include <stdio.h>
+#include <time.h>
 
 typedef unsigned char bfd_byte;
+
+extern size_t gdb_read_uleb128_to_uint64 (const unsigned char *buf,
+					  const unsigned char *buf_end,
+					  uint64_t *r);
+extern size_t read_uleb128 (const unsigned char *bytes,
+			    const unsigned char *buf_end,
+			    uint64_t *result);
 
 /* Write VAL in uleb128 format to P, returning a pointer to the
    following byte.  */
@@ -21,8 +30,8 @@ write_uleb128 (bfd_byte *p, uint64_t val)
   return p;
 }
 
-static bfd_byte *
-make_tests ()
+static const bfd_byte *
+make_tests (const bfd_byte **end)
 {
   // 2 M of tests.
   size_t amt = 2 * 1024 * 1024;
@@ -46,8 +55,89 @@ make_tests ()
       ptr = write_uleb128 (ptr, value);
     }
 
-  return prev;
+  *end = prev;
+  return mem;
 }
 
 static void
-check (const gdb_byte *bytes)
+check (const bfd_byte *bytes, const bfd_byte *end)
+{
+  while (bytes < end)
+    {
+      uint64_t val1, val2;
+      size_t len1 = gdb_read_uleb128_to_uint64 (bytes, end, &val1);
+      size_t len2 = read_uleb128 (bytes, end, &val2);
+
+      if (len1 != len2)
+	printf ("oops on length: val=%lu: %lu -> %lu\n",
+		(unsigned long) val1,
+		(unsigned long) len1, (unsigned long) len2);
+      else if (val1 != val2)
+	printf ("oops on value: %lu -> %lu\n",
+		(unsigned long) val1, (unsigned long) val2);
+      else
+	{
+	  bytes += len1;
+	  continue;
+	}
+
+      printf ("bytes: ");
+      for (int i = 0; i < len1; ++i)
+	printf ("%02x ", bytes[i]);
+      printf ("\n");
+
+      exit (1);
+    }
+}
+
+static void
+t1 (const bfd_byte *bytes, const bfd_byte *end)
+{
+  while (bytes < end)
+    {
+      uint64_t val;
+      size_t len = gdb_read_uleb128_to_uint64 (bytes, end, &val);
+      bytes += val;
+    }
+}
+
+static void
+t2 (const bfd_byte *start, const bfd_byte *end)
+{
+  for (int i = 0; i < 500; ++i)
+    {
+      const bfd_byte *bytes = start;
+
+      while (bytes < end)
+	{
+	  uint64_t val;
+	  size_t len = read_uleb128 (bytes, end, &val);
+	  bytes += val;
+	}
+    }
+}
+
+int
+main ()
+{
+  const bfd_byte *end;
+  const bfd_byte *bytes = make_tests (&end);
+
+  check (bytes, end);
+
+  clock_t cstart = clock ();
+  t1 (bytes, end);
+  clock_t cend  = clock ();
+
+  double cpu_time_used = ((double) (cend - cstart)) / CLOCKS_PER_SEC;
+  printf ("gdb = %f\n", cpu_time_used);
+
+  cstart = clock ();
+  t2 (bytes, end);
+  cend  = clock ();
+
+  cpu_time_used = ((double) (cend - cstart)) / CLOCKS_PER_SEC;
+  printf ("new = %f\n", cpu_time_used);
+
+  return 0;
+}
