@@ -9,7 +9,7 @@ hack.o: hack.c
 	gcc -g $(OPT) -c hack.c
 
 bench.o: bench.c
-	gcc -g -c bench.c
+	gcc -g $(OPT) -c bench.c
 
 clean:
 	rm -f bench hack.o bench.o

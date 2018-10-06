@@ -32,6 +32,44 @@ gdb_read_uleb128_to_uint64 (const unsigned char *buf,
   return p - buf;
 }
 
+size_t
+unrolled_read_uleb128_to_uint64 (const unsigned char *buf,
+				 const unsigned char *buf_end,
+				 uint64_t *r)
+{
+  const unsigned char *p = buf;
+  uint64_t result = 0;
+  unsigned char byte;
+
+#define unlikely(x) __builtin_expect ((x), 0)
+
+#define STEP(Num)						\
+  if (unlikely (p >= buf_end))					\
+    return 0;							\
+  byte = *p++;							\
+  result |= ((uint64_t) (byte & 0x7f)) << (7 * Num);		\
+  /* FIXME check to see which of these should be likely or	\
+     unlikely.  */						\
+  if ((byte & 0x80) == 0)					\
+    {								\
+      *r = result;						\
+      return Num + 1;						\
+    }
+
+  STEP (0);
+  STEP (1);
+  STEP (2);
+  STEP (3);
+  STEP (4);
+  STEP (5);
+  STEP (6);
+  STEP (7);
+  STEP (8);
+  STEP (9);
+
+  return 0;
+}
+
 // FIXME really just doing 2 bytes up front seems better.
 // Has same API as the above.
 size_t

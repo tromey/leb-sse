@@ -8,6 +8,9 @@ typedef unsigned char bfd_byte;
 extern size_t gdb_read_uleb128_to_uint64 (const unsigned char *buf,
 					  const unsigned char *buf_end,
 					  uint64_t *r);
+extern size_t unrolled_read_uleb128_to_uint64 (const unsigned char *buf,
+					       const unsigned char *buf_end,
+					       uint64_t *r);
 extern size_t read_uleb128 (const unsigned char *bytes,
 			    const unsigned char *buf_end,
 			    uint64_t *result);
@@ -64,9 +67,10 @@ check (const bfd_byte *bytes, const bfd_byte *end)
 {
   while (bytes < end)
     {
-      uint64_t val1, val2;
+      uint64_t val1, val2, val3;
       size_t len1 = gdb_read_uleb128_to_uint64 (bytes, end, &val1);
       size_t len2 = read_uleb128 (bytes, end, &val2);
+      size_t len3 = unrolled_read_uleb128_to_uint64 (bytes, end, &val3);
 
       if (len1 != len2)
 	printf ("oops on length: val=%lu: %lu -> %lu\n",
@@ -75,6 +79,13 @@ check (const bfd_byte *bytes, const bfd_byte *end)
       else if (val1 != val2)
 	printf ("oops on value: %lu -> %lu\n",
 		(unsigned long) val1, (unsigned long) val2);
+      else if (len1 != len3)
+	printf ("oops on length3: val=%lu: %lu -> %lu\n",
+		(unsigned long) val1,
+		(unsigned long) len1, (unsigned long) len3);
+      else if (val1 != val3)
+	printf ("oops on value3: %lu -> %lu\n",
+		(unsigned long) val1, (unsigned long) val3);
       else
 	{
 	  bytes += len1;
@@ -90,32 +101,21 @@ check (const bfd_byte *bytes, const bfd_byte *end)
     }
 }
 
-static void
-t1 (const bfd_byte *bytes, const bfd_byte *end)
-{
-  while (bytes < end)
-    {
-      uint64_t val;
-      size_t len = gdb_read_uleb128_to_uint64 (bytes, end, &val);
-      bytes += val;
-    }
+#define FUNC(Name, Callee)				\
+static void						\
+Name (const bfd_byte *bytes, const bfd_byte *end)	\
+{							\
+  while (bytes < end)					\
+    {							\
+      uint64_t val;					\
+      size_t len = Callee (bytes, end, &val);		\
+      bytes += val;					\
+    }							\
 }
 
-static void
-t2 (const bfd_byte *start, const bfd_byte *end)
-{
-  for (int i = 0; i < 500; ++i)
-    {
-      const bfd_byte *bytes = start;
-
-      while (bytes < end)
-	{
-	  uint64_t val;
-	  size_t len = read_uleb128 (bytes, end, &val);
-	  bytes += val;
-	}
-    }
-}
+FUNC (t1, gdb_read_uleb128_to_uint64)
+FUNC (t2, read_uleb128)
+FUNC (t3, unrolled_read_uleb128_to_uint64)
 
 int
 main ()
@@ -125,19 +125,22 @@ main ()
 
   check (bytes, end);
 
-  clock_t cstart = clock ();
-  t1 (bytes, end);
-  clock_t cend  = clock ();
+#define COUNT 5000
 
-  double cpu_time_used = ((double) (cend - cstart)) / CLOCKS_PER_SEC;
-  printf ("gdb = %f\n", cpu_time_used);
+#define TEST(Name, Func)						\
+  {									\
+    clock_t cstart = clock ();						\
+    for (int i = 0; i < COUNT; ++i)					\
+      Func (bytes, end);						\
+    clock_t cend  = clock ();						\
+									\
+    double cpu_time_used = ((double) (cend - cstart)) / CLOCKS_PER_SEC;	\
+    printf (Name " = %f\n", cpu_time_used);				\
+  }
 
-  cstart = clock ();
-  t2 (bytes, end);
-  cend  = clock ();
-
-  cpu_time_used = ((double) (cend - cstart)) / CLOCKS_PER_SEC;
-  printf ("new = %f\n", cpu_time_used);
+  TEST ("gdb", t1);
+  TEST ("sse", t2);
+  TEST ("unrolled", t3);
 
   return 0;
 }
