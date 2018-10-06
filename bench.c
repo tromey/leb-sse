@@ -138,8 +138,8 @@ main ()
     printf (Name " = %f\n", cpu_time_used);				\
   }
 
-  TEST ("gdb", t1);
-  TEST ("sse", t2);
+  TEST ("     gdb", t1);
+  TEST ("     sse", t2);
   TEST ("unrolled", t3);
 
   return 0;

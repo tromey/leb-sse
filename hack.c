@@ -4,6 +4,11 @@
 // https://software.intel.com/sites/landingpage/IntrinsicsGuide/#techs=SSE,SSE2,SSE3,SSSE3,SSE4_1,SSE4_2&expand=5644,5587,5105,4751,1015,1015,5481,4702,4620,4673,4673,5723,3611,432&cats=Arithmetic
 // https://woboq.Com/blog/utf-8-processing-using-simd.html
 
+/* Instrumenting gdb to count the length of ulebs, then running
+   gdb -readnow gdb and looking at the array showed:
+   $1 = {0, 20140767, 519245, 18070, 0, 634, 0, 0, 0, 0, 1}
+   So it seems lebs tend to be length 1 or 2.  */
+
 // From gdb include/leb128.h -- not the one gdb actually uses but very
 // similar.
 size_t
@@ -43,17 +48,18 @@ unrolled_read_uleb128_to_uint64 (const unsigned char *buf,
 
 #define unlikely(x) __builtin_expect ((x), 0)
 
-#define STEP(Num)						\
-  if (unlikely (p >= buf_end))					\
-    return 0;							\
-  byte = *p++;							\
-  result |= ((uint64_t) (byte & 0x7f)) << (7 * Num);		\
-  /* FIXME check to see which of these should be likely or	\
-     unlikely.  */						\
-  if ((byte & 0x80) == 0)					\
-    {								\
-      *r = result;						\
-      return Num + 1;						\
+#define STEP(Num)							\
+  if (unlikely (p >= buf_end))						\
+    return 0;								\
+  byte = *p++;								\
+  result |= ((uint64_t) (byte & 0x7f)) << (7 * Num);			\
+  /* See above for why this is done this way.  It is likely that lebs	\
+     are 1 or 2 bytes, so really just the first byte is likely to have	\
+     a continuation.  */						\
+  if (__builtin_expect ((byte & 0x80) == 0, Num > 0))			\
+    {									\
+      *r = result;							\
+      return Num + 1;							\
     }
 
   STEP (0);
